@@ -1,0 +1,89 @@
+pipeline {
+    agent any
+
+    environment {
+        // Docker images
+        DOCKER_IMAGE_BACKEND = "GNANAPRASADCHILLAKURU/backend:latest"
+        DOCKER_IMAGE_FRONTEND = "GNANAPRASADCHILLAKURU/frontend:latest"
+        DOCKER_REGISTRY_CREDENTIALS = "fusionpact-devops"  // Your Jenkins credential
+        SSH_CREDENTIALS_ID = "fusionpact-devops"           // If same credential is SSH key
+        EC2_USER = "ubuntu"
+        EC2_HOST = "3.80.29.202"  // Replace with your EC2 public IP
+        APP_DIR = "/home/ubuntu/fusionpact-devops-challenge"
+    }
+
+    stages {
+        stage('Checkout Code') {
+            steps {
+                echo "Checking out code from GitHub..."
+                git branch: 'main', url: 'https://github.com/GNANAPRASADCHILLAKURU/fusionpact-devops-challenge.git'
+            }
+        }
+
+        stage('Docker Login') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: DOCKER_REGISTRY_CREDENTIALS, usernameVariable: 'USER', passwordVariable: 'PASS')]) {
+                    echo "Logging into Docker Hub..."
+                    sh 'echo $PASS | docker login -u $USER --password-stdin'
+                }
+            }
+        }
+
+        stage('Build Backend') {
+            steps {
+                dir('backend') {
+                    echo "Building backend Docker image..."
+                    sh '''
+                    docker pull $DOCKER_IMAGE_BACKEND || true
+                    docker build -t $DOCKER_IMAGE_BACKEND .
+                    '''
+                }
+            }
+        }
+
+        stage('Build Frontend') {
+            steps {
+                dir('frontend') {
+                    echo "Building frontend Docker image..."
+                    sh '''
+                    docker pull $DOCKER_IMAGE_FRONTEND || true
+                    docker build -t $DOCKER_IMAGE_FRONTEND .
+                    '''
+                }
+            }
+        }
+
+        stage('Push Docker Images') {
+            steps {
+                echo "Pushing Docker images to Docker Hub..."
+                sh "docker push $DOCKER_IMAGE_BACKEND"
+                sh "docker push $DOCKER_IMAGE_FRONTEND"
+            }
+        }
+
+        stage('Deploy to EC2') {
+            steps {
+                echo "Deploying application on EC2..."
+                sshagent([SSH_CREDENTIALS_ID]) {
+                    sh """
+                    ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST '
+                        cd $APP_DIR &&
+                        docker-compose down &&
+                        docker-compose pull &&
+                        docker-compose up -d --build
+                    '
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo '✅ Pipeline executed successfully. Application deployed!'
+        }
+        failure {
+            echo '❌ Pipeline failed. Check logs.'
+        }
+    }
+}
